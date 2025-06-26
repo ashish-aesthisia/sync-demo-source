@@ -1,0 +1,80 @@
+name: Repository Sync - Auto + API
+
+on:
+  push:
+    branches: [ main ]
+  repository_dispatch:
+    types:
+      - sync-repos
+      - full-sync
+      - quick-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout source repository
+      uses: actions/checkout@v4
+
+    - name: Display trigger info
+      run: |
+        if [ "${{ github.event_name }}" = "push" ]; then
+          echo "🔄 Auto-triggered by commit/push"
+          echo "Commit: ${{ github.sha }}"
+          echo "Author: ${{ github.actor }}"
+        else
+          echo "🚀 API-triggered via repository dispatch"
+          echo "Event Type: ${{ github.event.action }}"
+          echo "Triggered by: ${{ github.event.client_payload.triggered_by || 'API' }}"
+        fi
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "Sync Bot"
+        git config --global user.email "sync@github.com"
+
+    - name: Clone target repository
+      run: |
+        git clone https://${{ secrets.TARGET_REPO_TOKEN }}@github.com/${{ secrets.TARGET_REPO_OWNER }}/${{ secrets.TARGET_REPO_NAME }}.git ../target-repo
+
+    - name: List files in source repository before sync
+      run: |
+        echo "📂 Files in source repository:"
+        ls -la
+
+    - name: List files in target repository before sync
+      run: |
+        echo "📂 Files in target repository before sync:"
+        ls -la ../target-repo
+
+    - name: Sync files to target (preserving root structure)
+      run: |
+        rsync -av --delete \
+          --exclude='.git' \
+          --exclude='.github' \
+          ./ ../target-repo/
+
+        cd ../target-repo
+
+        if [ "${{ github.event_name }}" = "push" ]; then
+          COMMIT_MSG="Auto sync from commit: ${{ github.event.head_commit.message }}
+
+          Triggered by: Push to main branch
+          Source commit: ${{ github.sha }}
+          Time: $(date)"
+        else
+          COMMIT_MSG="API sync via repository dispatch
+
+          Event: ${{ github.event.action }}
+          Triggered by: ${{ github.event.client_payload.triggered_by || 'API' }}
+          Time: $(date)"
+        fi
+
+        git add .
+        git commit -m "$COMMIT_MSG" || echo "No changes to commit"
+        git push origin main
+
+    - name: Success message
+      run: |
+        echo "✅ Successfully synced to target repository!"
